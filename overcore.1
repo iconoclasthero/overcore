@@ -1,0 +1,109 @@
+#!/bin/bash
+
+[[ -f /usr/local/bin/editscript ]] && . /usr/local/bin/editscript
+
+# overcore: monitor per-PID CPU, per-core CPU, and core temps with Discord alerts
+
+threshold_cpu=20        # % threshold for both PID and per-core checks
+duration_cpu=60         # seconds over threshold
+threshold_cpu=90       # %CPU per process
+duration_cpu=600       # seconds over threshold
+threshold_temp=80       # °C per core
+duration_temp=300       # seconds over temp threshold
+checkint=30             # seconds between checks
+fifo=/var/lib/discord/capnhook.fifo
+
+declare -A overpid overcore overtemp
+
+# verify we can write to capnhook.fifo
+if [[ ! -w "$fifo" ]]; then
+    printf '❌ Cannot write to $fifo. Make sure the user is in the discord group.\n' >&2
+    exit 1
+fi
+
+#discorddm(){ local msg="$*"; printf "$msg"|"$fifo"; }
+
+log(){ [[ "$1" = --discord ]] && { discord=1; shift; }; printf '[%(%F %T)T] %s\n' -1 "$*"; (( discord )) && printf '[%(%F %T)T] %s\n' -1 "$*"|"$fifo"; }
+
+getpids(){
+    # pid pcpu cmd
+    ps -eo pid,pcpu,comm --sort=-pcpu --no-headers |
+        awk -v th="$threshold_cpu" '$2>th {print $1,$2,$3}'
+}
+
+getcores(){
+    # core usage%
+    mpstat -P ALL 1 1 |
+        awk '/^[0-9]/ && $3!="all" {print $3,100-$12}'
+}
+
+while :; do
+    now=$(date +%s)
+
+    # --- per-PID CPU
+    while read -r pid pcpu cmd; do
+        pcpu=${pcpu%.*}
+        if (( pcpu > threshold_cpu )); then
+            [[ -z ${overpid[$pid]} ]] && {
+                overpid[$pid]=$now
+                log "⚠️ $cmd (pid $pid) >${threshold_cpu}% CPU (now ${pcpu}%)"
+            }
+            if (( now - overpid[$pid] >= duration_cpu )); then
+                core=$(ps -p "$pid" -o psr= | tr -d ' ')
+                log -d "📣 $cmd (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+#                discorddm "⚠️ $cmd (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+                unset overpid[$pid]
+            fi
+        else
+            [[ -n ${overpid[$pid]} ]] && log "$cmd (pid $pid) back under threshold"
+            unset overpid[$pid]
+        fi
+    done < <(getpids)
+
+
+    # --- per-core CPU
+    while read -r core usage; do
+        usage=${usage%.*}
+        if (( usage > threshold_cpu )); then
+            [[ -z ${overcore[$core]} ]] && {
+                overcore[$core]=$now
+                log "⚠️ core $core >${threshold_cpu}% load (now ${usage}%)"
+            }
+            if (( now - overcore[$core] >= duration_cpu )); then
+                log -d "🔥 core $core sustained >${threshold_cpu}% for ${duration_cpu}s"
+#                discorddm "🔥 core $core sustained >${threshold_cpu}% for ${duration_cpu}s"
+                unset overcore[$core]
+            fi
+        else
+            [[ -n ${overcore[$core]} ]] && log "core $core back under threshold"
+            unset overcore[$core]
+        fi
+    done < <(getcores)
+
+
+    # --- per-core temperature
+    core_index=0
+    for tempfile in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
+        [[ ! -r "$tempfile" ]] && continue
+        temp=$(( $(<"$tempfile") / 1000 ))
+        key="core$core_index"
+
+        if (( temp > threshold_temp )); then
+            [[ -z ${overtemp[$key]} ]] && {
+                overtemp[$key]=$now
+                log "⚠️ $key temp ${temp}°C >${threshold_temp}°C"
+            }
+            if (( now - overtemp[$key] >= duration_temp )); then
+                log -d "🔥 $key sustained ${temp}°C for ${duration_temp}s"
+#                discorddm "🔥 $key sustained ${temp}°C for ${duration_temp}s"
+                unset overtemp[$key]
+            fi
+        else
+            [[ -n ${overtemp[$key]} ]] && log "$key temp back below threshold"
+            unset overtemp[$key]
+        fi
+        ((core_index++))
+    done
+
+    sleep "$checkint"
+done

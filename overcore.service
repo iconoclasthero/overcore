@@ -1,0 +1,18 @@
+# /etc/systemd/system/overcore.service
+[Unit]
+Description=Overcore CPU/Core/Temp Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=overcore
+Group=overcore
+ExecStart=/usr/local/sbin/overcore
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/overcore/overcore.log
+StandardError=append:/var/log/overcore/overcore.log
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# overcore: per-core CPU & CPU temp monitoring with Discord alerts
+
+threshold_cpu=90       # %CPU per process
+duration_cpu=600       # seconds over threshold
+threshold_temp=80      # °C per core
+duration_temp=300
+
+threshold_cpu=20       # %CPU per process
+duration_cpu=60       # seconds over threshold
+checkint=30            # seconds between checks
+webhook='https://discord.com/api/webhooks/...'
+
+declare -A overcpu overtemp
+
+while :; do
+    now=$(date +%s)
+
+##    # --- per-process CPU
+##    while read -r pid pcpu cmd; do
+##        pcpu=${pcpu%.*}
+##        if (( pcpu > threshold_cpu )); then
+##            [[ -z ${overcpu[$pid]} ]] && overcpu[$pid]=$now
+##            if (( now - overcpu[$pid] >= duration_cpu )); then
+###                curl -s -H 'Content-Type: application/json' \
+###                     -d "{\"content\":\"⚠️ $cmd (pid $pid) >${threshold_cpu}% CPU for ${duration_cpu}s\"}" \
+###                     "$webhook"
+##                     discorddm "⚠️ $cmd (pid $pid) >${threshold_cpu}% CPU for ${duration_cpu}s"
+##                unset overcpu[$pid]
+##            fi
+##        else
+##            unset overcpu[$pid]
+##        fi
+##    done < <(ps -eo pid,pcpu,comm --no-headers)
+#
+## --- per-process CPU usage with core info
+#while read -r pid pcpu cmd; do
+#    pcpu=${pcpu%.*}
+#    if (( pcpu > threshold_cpu )); then
+#        [[ -z ${overcpu[$pid]} ]] && overcpu[$pid]=$now
+#
+#        if (( now - overcpu[$pid] >= duration_cpu )); then
+#            # get last CPU core this process ran on
+#            core=$(ps -p "$pid" -o psr= | tr -d ' ')
+#
+##            curl -s -H 'Content-Type: application/json' \
+##                 -d "{\"content\":\"⚠️ $cmd (pid $pid) on core $core >${threshold_cpu}% CPU for ${duration_cpu}s\"}" \
+##                 "$webhook"
+#                 discorddm "⚠️ $cmd (pid $pid) on core $core >${threshold_cpu}% CPU for ${duration_cpu}s"
+#
+#            unset overcpu[$pid]
+#        fi
+#    else
+#        unset overcpu[$pid]
+#    fi
+#done < <(ps -eo pid,pcpu,comm --no-headers)
+
+# --- helper function for logging
+log() {
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$ts] $*"
+}
+
+# --- per-process CPU usage with logging
+while read -r pid pcpu cmd; do
+    pcpu=${pcpu%.*}
+    if (( pcpu > threshold_cpu )); then
+        [[ -z ${overcpu[$pid]} ]] && {
+            overcpu[$pid]=$now
+            log "⚠️ $cmd (pid $pid) exceeded CPU threshold ${threshold_cpu}% (current ${pcpu}%)"
+        }
+
+        if (( now - overcpu[$pid] >= duration_cpu )); then
+            core=$(ps -p "$pid" -o psr= | tr -d ' ')
+            log "📣 Sending alert: $cmd (pid $pid) on core $core >${threshold_cpu}% CPU for ${duration_cpu}s"
+#            curl -s -H 'Content-Type: application/json' \
+#                 -d "{\"content\":\"⚠️ $cmd (pid $pid) on core $core >${threshold_cpu}% CPU for ${duration_cpu}s\"}" \
+#                 "$webhook"
+                 discorddm "⚠️ $cmd (pid $pid) on core $core >${threshold_cpu}% CPU for ${duration_cpu}s"
+            unset overcpu[$pid]
+        fi
+    else
+        [[ -n ${overcpu[$pid]} ]] && log "$cmd (pid $pid) back under CPU threshold (${pcpu}%)"
+        unset overcpu[$pid]
+    fi
+done < <(ps -eo pid,pcpu,comm --no-headers)
+
+
+#    # --- per-core temperature
+#    core_index=0
+#    while read -r temp; do
+#        temp=$(( temp / 1000 ))
+#        key="core$core_index"
+#        if (( temp > threshold_temp )); then
+#            [[ -z ${overtemp[$key]} ]] && overtemp[$key]=$now
+#            if (( now - overtemp[$key] >= duration_temp )); then
+##                curl -s -H 'Content-Type: application/json' \
+##                     -d "{\"content\":\"🔥 $key temp ${temp}°C for ${duration_temp}s\"}" \
+##                     "$webhook"
+#                     discorddm "🔥 $key temp ${temp}°C for ${duration_temp}s"
+#                unset overtemp[$key]
+#            fi
+#        else
+#            unset overtemp[$key]
+#        fi
+#        ((core_index++))
+#    done < <(grep -h . /sys/class/thermal/thermal_zone*/temp 2>/dev/null)
+#
+
+# --- per-core temperature (Intel/AMD)
+core_index=0
+for tempfile in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
+    temp=$(( $(<"$tempfile") / 1000 ))  # convert millidegree to °C
+    key="core$core_index"
+
+    if (( temp > threshold_temp )); then
+        [[ -z ${overtemp[$key]} ]] && overtemp[$key]=$now
+        if (( now - overtemp[$key] >= duration_temp )); then
+#            curl -s -H 'Content-Type: application/json' \
+#                 -d "{\"content\":\"🔥 $key temp ${temp}°C for ${duration_temp}s\"}" \
+#                 "$webhook"
+                     discorddm "🔥 $key temp ${temp}°C for ${duration_temp}s"
+            unset overtemp[$key]
+        fi
+    else
+        unset overtemp[$key]
+    fi
+
+    ((core_index++))
+done
+
+
+    sleep $checkint
+done

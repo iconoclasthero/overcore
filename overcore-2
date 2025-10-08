@@ -1,0 +1,104 @@
+#!/bin/bash
+# overcore monitor
+
+[[ /usr/local/bin/editscript ]] && . /usr/local/bin/editscript
+
+threshold_cpu=90        # % threshold for PID and core
+duration_cpu=600        # seconds above threshold
+threshold_temp=80       # °C
+duration_temp=300
+checkint=30             # seconds between checks
+fifo=/var/lib/discord/capnhook.fifo
+debug=0                 # set 1 to dump timer tables each loop
+
+declare -A overpid overcore overtemp
+
+log() {
+    [[ "$1" = -d ]] && { discord=1; shift; } || discord=0
+    printf '[%(%F %T)T] %s\n' -1 "$*"
+    (( discord )) && printf '[%(%F %T)T] %s\n' -1 "$*" >>"$fifo" 2>/dev/null
+}
+
+getpids() {
+    # pid pcpu cmd – filtered to over threshold
+    ps -eo pid,pcpu,comm --sort=-pcpu --no-headers |
+        awk -v th="$threshold_cpu" '$2>th {print $1,$2,$3}'
+}
+
+getcores() {
+    # core usage%
+    mpstat -P ALL 1 1 |
+        awk '/^[0-9]/ && $3!="all" {print $3,100-$13}'
+}
+
+while :; do
+    now=$(date +%s)
+
+    ### --- per-PID CPU
+    declare -A seenpid=()
+    while read -r pid pcpu cmd; do
+        pcpu=${pcpu%.*}
+        seenpid[$pid]=1
+        if [[ -z ${overpid[$pid]} ]]; then
+            overpid[$pid]=$now
+            continue
+        fi
+        if (( now - overpid[$pid] >= duration_cpu )); then
+            core=$(ps -p "$pid" -o psr= | tr -d ' ')
+            log -d "📣 $cmd (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+            unset overpid[$pid]
+        fi
+    done < <(getpids)
+
+    # prune pids no longer hot
+    for p in "${!overpid[@]}"; do
+        [[ -z ${seenpid[$p]} ]] && unset overpid[$p]
+    done
+
+
+    ### --- per-core CPU
+    declare -A seencore=()
+    while read -r core usage; do
+        usage=${usage%.*}
+        seencore[$core]=1
+        if [[ -z ${overcore[$core]} ]]; then
+            overcore[$core]=$now
+            continue
+        fi
+        if (( now - overcore[$core] >= duration_cpu )); then
+            log -d "🔥 core $core sustained >${threshold_cpu}% for ${duration_cpu}s"
+            unset overcore[$core]
+        fi
+    done < <(getcores)
+
+    # prune cores no longer hot
+    for c in "${!overcore[@]}"; do
+        [[ -z ${seencore[$c]} ]] && unset overcore[$c]
+    done
+
+
+    ### --- per-core temperature
+    core_index=0
+    for tempfile in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
+        [[ ! -r "$tempfile" ]] && continue
+        temp=$(( $(<"$tempfile") / 1000 ))
+        key="core$core_index"
+
+        if (( temp > threshold_temp )); then
+            [[ -z ${overtemp[$key]} ]] && { overtemp[$key]=$now; continue; }
+            if (( now - overtemp[$key] >= duration_temp )); then
+                log -d "🔥 $key sustained ${temp}°C for ${duration_temp}s"
+                unset overtemp[$key]
+            fi
+        else
+            [[ -n ${overtemp[$key]} ]] && unset overtemp[$key]
+        fi
+        ((core_index++))
+    done
+
+    (( debug )) && {
+        echo "DBG $(date +%T) overpid=${!overpid[@]} overcore=${!overcore[@]} overtemp=${!overtemp[@]}"
+    }
+
+    sleep "$checkint"
+done

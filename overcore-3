@@ -1,0 +1,324 @@
+#!/bin/bash
+# overcore monitor
+verbose=1
+[[ /usr/local/bin/editscript ]] && . /usr/local/bin/editscript
+
+threshold_cpu=90        # % threshold for PID and core
+duration_cpu=600        # seconds above threshold
+#threshold_cpu=60        # % threshold for PID and core
+duration_cpu=300        # seconds above threshold
+threshold_temp=80       # °C
+duration_temp=300
+checkint=30             # seconds between checks
+checkint=10             # seconds between checks
+fifo=/var/lib/discord/capnhook.fifo
+debug=0                 # set 1 to dump timer tables each loop
+
+declare -A overpid overcore overtemp prevticks
+
+getpids_proc() {
+  printf 'Entered %s\n' "$FUNCNAME"
+  local verbose=2
+  local interval="$checkint"
+  local clk=$(getconf CLK_TCK)
+ # local minticks=30
+  local minticks=$(( clk * interval / 2 ))
+  local now=$(date +%s)
+
+#  for piddir in /proc/[0-9]*; do
+#    local pid=${piddir##*/}
+#    [[ ! -r "$piddir/stat" ]] && continue
+#
+#    # read entire stat line
+#    local statline
+#    statline=$(<"$piddir/stat")
+##    printf '$statline: %s\n' "$statline"
+#    # comm is between first pair of parentheses (may have spaces)
+#    local comm
+#    comm=${statline#*\(}       # strip up to first '('
+#    comm=${comm%%)*}           # strip after first ')'
+#
+#    # extract utime (14), stime (15) relative to stat line split by space after comm
+#    # everything after ') '
+#    local rest="${statline#*\) }"
+##    printf 'staline after first ) : %s\n' "$rest"
+#    read -r _ _ _ _ _ _ _ _ _ _ _ _ utime stime _ <<< "$rest"
+#
+#    (( verbose )) && echo "\$comm: $comm \$utime: $utime; \$stime: $stime"
+#    (( verbose )) && (( utime == 0 || stime == 0 )) && read -rp "$(ps -p "$pid" -o pid,comm,utime,stime)"z
+#
+#    # sum of user + sys ticks
+#    local tot=$((utime+stime))
+##    (( tot < minticks/10 )) && continue
+#    (( tot < minticks )) && continue
+#
+#    # compute elapsed time since last sample
+#    local prev=${prevticks[$pid]:-0}
+#    local delta=$((tot - prev))
+#    prevticks[$pid]=$tot
+#
+#    (( delta < min_ticks )) && continue
+#
+#    # convert to %CPU over interval (interval in seconds)
+##    local pcpu=$((delta * 100 / clk / interval))
+#    local pcpu=$(( delta * 100 / (clk * interval) ))
+#
+#    (( pcpu > threshold_cpu )) && printf '%s %s %s\n' "$pid" "$pcpu" "$comm" || continue
+#  done
+#for piddir in /proc/[0-9]*; do
+#
+#    pid=${piddir##*/}
+#    [[ ! -r $piddir/stat ]] && continue
+#    read -r _ comm rest < <(awk '{print $1,$2,substr($0,index($0,$3))}' "$piddir/stat")
+#    statline=$(<"$piddir/stat")
+#    comm=${statline#*\(}
+#    comm=${comm%%)*}
+#    rest=${statline#*\) }
+#    read -r _ _ _ _ _ _ _ _ _ _ _ _ utime stime _ <<< "$rest"
+#
+#    tot=$(( utime + stime ))
+#
+#    [[ -z ${prevticks[$pid]} ]] && { prevticks[$pid]=$tot; continue; }
+#
+#    delta=$(( tot - prevticks[$pid] ))
+#    prevticks[$pid]=$tot
+#
+#    (( delta < minticks )) && continue
+#
+#    pcpu=$(( delta * 100 / (clk * checkint) ))
+#
+#    (( pcpu > threshold_cpu )) && printf '%s %s %s\n' "$pid" "$pcpu" "$comm"
+#done
+# assume: clk=$(getconf CLK_TCK), checkint in seconds
+#         prevticks[pid] is an associative array
+
+for piddir in /proc/[0-9]*; do
+    pid=${piddir##*/}
+    [[ ! -r /proc/$pid/stat ]] && continue
+
+#    read _ comm state ppid pgrp _ _ _ _ _ _ _ ut st _ < /proc/$pid/stat
+    # read entire stat line
+    local statline
+    statline=$(<"$piddir/stat")
+#    printf '$statline: %s\n' "$statline"
+    # comm is between first pair of parentheses (may have spaces)
+    local comm
+    comm=${statline#*\(}       # strip up to first '('
+    comm=${comm%%)*}           # strip after first ')'
+
+    # extract utime (14), stime (15) relative to stat line split by space after comm
+    # everything after ') '
+    local rest="${statline#*\) }"
+#    printf 'staline after first ) : %s\n' "$rest"
+    read -r state ppid pgrp _ _ _ _ _ _ _ _ utime stime _ <<< "$rest"
+
+#    (( verbose )) && (( utime == 0 || stime == 0 )) && ps -p "$pid" -o pid,comm,utime,stime >&2
+    cur=$((utime+stime))
+
+    # skip very short-lived / inactive tasks
+    (( cur==0 )) && continue
+    (( cur<1000 )) && continue
+    (( verbose == 2 && pid == pidstress )) && echo "\$comm: $comm \$utime: $utime; \$stime: $stime" >&2
+
+    prev=${prevticks[$pid]:-0}
+    (( verbose == 2 && pid == pidstress )) && printf '$cur=%s\n$prev=%s\n' "$cur" "$prev" >&2
+        echo "$pid $cur $comm"
+    ((prev>0)) || {                # first time seeing this pid
+        prevticks[$pid]=$cur
+        continue
+    }
+    (( verbose == 2 && pid == pidstress )) && echo "GOT PAST THE CONTINUE" >&2
+    # per-core %CPU over the last checkint seconds
+    pcpu=$(( ( (cur - prev) * 100 ) / (checkint * clk) ))
+    prevticks[$pid]=$cur
+
+    (( pcpu >= threshold_cpu )) && overpid[$pid]=$pcpu
+    (( verbose == 2 && pid == pidstress )) && echo "[verbose] pid=$pid pcpu=$pcpu cur=$cur prev=$prev" >&2
+
+done
+
+}
+
+
+log(){
+    [[ "$1" = -d ]] && { discord=1; shift; } || discord=0
+    ts="$(date -Is)"
+#    printf '[%(%F %T)T] %s\n' -1 "$*"
+#    (( discord )) && printf '[%(%F %T)T] %s\n' -1 "$*" >>"$fifo" 2>/dev/null
+    printf '[%s] %s\n' "$ts" "$*"
+#    (( discord )) && printf '[%s] %s\n' "$ts" "$*" >> "$fifo" 2>/dev/null
+}
+
+getpids(){
+  # pid pcpu cmd – filtered to over threshold
+  ps -eo pid,pcpu,comm --sort=-pcpu --no-headers |
+    awk -v th="$threshold_cpu" '$2>th {print $1,$2,$3}'
+}
+
+getcores(){
+  declare -g mpstatarray
+  # core usage%
+  readarray -t mpstatarray < <(mpstat -P ALL 1 1)
+  printf %s\\n "${mpstatarray[@]}" |
+    awk '/^[0-9]/ && $3!="CPU" {print $3,100-$NF+0.5}'
+  (( verbose )) && for i in {2..8}; do printf '[verbose] %s\n' "${mpstatarray[$i]}" >&2 ; done
+}
+
+printf '[%s] %s starting\n' "$(date -Is)" "$0"
+
+while :; do
+  now=$(date +%s)
+  (( verbose )) && printf '[verbose] now=%s\n' "$now"
+
+  if pidstress=$(pgrep -n stress-ng); then
+    echo "Stress PID: $pidstress" >&2
+    ps -p $pidstress -o pid,psr,pcpu,comm >&2
+    awk '{if(NR==1||$1=='"$pidstress"') print $0}' /proc/stat >&2
+    awk '{print $0}' /proc/$pidstress/stat >&2
+  fi
+
+
+
+  ### --- per-PID CPU
+  declare -A seenpid=()
+  while read -r pid pcpu cmd; do
+    pcpu=${pcpu%.*}
+    seenpid[$pid]=1
+    if [[ -z ${overpid[$pid]} ]]; then
+      overpid[$pid]=$now
+      continue
+    fi
+    if (( now - overpid[$pid] >= duration_cpu )); then
+      core=$(ps -p "$pid" -o psr= | tr -d ' ')
+      log -d "⚠️  $cmd (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+      unset overpid[$pid]
+    fi
+  done < <(getpids)
+
+  # prune pids no longer hot
+  for p in "${!overpid[@]}"; do
+    [[ -z ${seenpid[$p]} ]] && unset overpid[$p]
+  done
+
+    ### --- per-PID CPU
+#    declare -A seenpid=()
+#    # use new proc-based reader
+#    while read -r pid pcpu cmd; do
+#        pcpu=${pcpu%.*}
+#        seenpid[$pid]=1
+#        if [[ -z ${overpid[$pid]} ]]; then
+#            overpid[$pid]=$now
+#            continue
+#        fi
+#        if (( now - overpid[$pid] >= duration_cpu )); then
+#            core=$(ps -p "$pid" -o psr= | tr -d ' ')
+#            log -d "⚠️  $cmd (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+#            unset overpid[$pid]
+#        fi
+#    done < <(getpids_proc)    # <-- switched here
+
+
+
+#declare -A seenpid=()
+#
+#while read -r pid cur comm; do
+#    clk=$(getconf CLK_TCK)
+#    seenpid[$pid]=1
+#
+#    prev=${prevticks[$pid]:-0}
+#    if (( prev == 0 )); then
+#        prevticks[$pid]=$cur
+#        continue
+#    fi
+#
+#    pcpu=$(( (cur - prev) * 100 / (clk * checkint) ))
+#    prevticks[$pid]=$cur
+#
+#    (( pcpu >= threshold_cpu )) && overpid[$pid]=$pcpu
+#
+##    (( verbose )) && echo "[verbose] pid=$pid pcpu=$pcpu cur=$cur prev=$prev" >&2
+#
+#    # duration check logic, unchanged
+#    if [[ -z ${overpid[$pid]} ]]; then
+#        overpid[$pid]=$now
+#        continue
+#    fi
+#    if (( now - overpid[$pid] >= duration_cpu )); then
+#        core=$(ps -p "$pid" -o psr= | tr -d ' ')
+#        log -d "⚠️  $comm (pid $pid) pinned core $core >${threshold_cpu}% for ${duration_cpu}s"
+#        unset overpid[$pid]
+#    fi
+#done < <(getpids_proc)
+#
+#
+#    # prune pids no longer hot
+#    for p in "${!overpid[@]}"; do
+#        [[ -z ${seenpid[$p]} ]] && unset overpid[$p]
+#    done
+
+
+
+  # --- per-core CPU (fixed: compare usage to threshold & prune)
+  declare -A seencore=()
+  while read -r core usage; do
+    \sleep 1s
+
+    usage=${usage%.*}
+    (( verbose )) && printf '[verbose] $core: %s\n[verbose] $usage: %s\n' "$core" "$usage"
+
+    if (( usage > threshold_cpu )); then
+      seencore[$core]=1
+      (( verbose )) && printf '[verbose] $core@$usage: %s@%s\n' "$core" "$usage"
+      (( verbose == 1 )) && printf '[verbose] ${seencore[%s]}=%s\n\n' "$core" "${seencore[$core]}"
+
+      # first time over threshold: start timer and skip duration test
+      if [[ -z ${overcore[$core]} ]]; then
+        overcore[$core]=$now
+        (( verbose == 1 )) && printf '[verbose] continue\n'
+        continue
+      fi
+
+      # subsequent iterations: check elapsed time
+      if (( now - overcore[$core] >= duration_cpu )); then
+        log -d "⚠️  core $core sustained >${threshold_cpu}% for ${duration_cpu}s (now ${usage}%)"
+        unset overcore[$core]
+      fi
+    else
+      # core currently under threshold: clear any existing timer
+      [[ -n ${overcore[$core]} ]] && { log "core $core back under threshold (${usage}%)"; unset overcore[$core]; }
+    fi
+  done < <(getcores)
+
+  # prune any overcore entries for cores getcores didn't report this iteration
+  for c in "${!overcore[@]}"; do
+    (( verbose == 1 )) && printf '[verbose] Begin prune step: ${seencore[%s]}=%s\n' "$c" "${seencore[$c]}"
+    [[ -z ${seencore[$c]} ]] && unset overcore[$c]
+    (( verbose == 1 )) && printf '[verbose] End prune step: ${seencore[%s]}=%s\n' "$c" "${seencore[$c]}"
+  done
+
+
+    ### --- per-core temperature
+    core_index=0
+    for tempfile in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
+        [[ ! -r "$tempfile" ]] && continue
+        temp=$(( $(<"$tempfile") / 1000 ))
+        key="core$core_index"
+
+        if (( temp > threshold_temp )); then
+            [[ -z ${overtemp[$key]} ]] && { overtemp[$key]=$now; continue; }
+            if (( now - overtemp[$key] >= duration_temp )); then
+                log -d "🔥 $key sustained ${temp}°C for ${duration_temp}s"
+                unset overtemp[$key]
+            fi
+        else
+            [[ -n ${overtemp[$key]} ]] && unset overtemp[$key]
+        fi
+        ((core_index++))
+    done
+
+    (( verbose == 1 )) && {
+        echo "[verbose] $(date -Is) overpid=${!overpid[@]} overcore=${!overcore[@]} overtemp=${!overtemp[@]}"
+    }
+
+    sleep "$checkint"
+done

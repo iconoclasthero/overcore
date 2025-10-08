@@ -6,7 +6,8 @@ After=network.target
 [Service]
 Type=simple
 User=overcore
-Group=overcore
+Group=discord
+#SupplementaryGroups=discord
 ExecStart=/usr/local/sbin/overcore
 Restart=always
 RestartSec=10

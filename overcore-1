@@ -23,7 +23,7 @@ fi
 
 #discorddm(){ local msg="$*"; printf "$msg"|"$fifo"; }
 
-log(){ [[ "$1" = --discord ]] && { discord=1; shift; }; printf '[%(%F %T)T] %s\n' -1 "$*"; (( discord )) && printf '[%(%F %T)T] %s\n' -1 "$*"|"$fifo"; }
+log(){ [[ "$1" = -d ]] && { discord=1; shift; }; printf '[%(%F %T)T] %s\n' -1 "$*"; (( discord )) && printf '[%(%F %T)T] %s\n' -1 "$*"|"$fifo"; }
 
 getpids(){
     # pid pcpu cmd
@@ -46,7 +46,8 @@ while :; do
         if (( pcpu > threshold_cpu )); then
             [[ -z ${overpid[$pid]} ]] && {
                 overpid[$pid]=$now
-                log "⚠️ $cmd (pid $pid) >${threshold_cpu}% CPU (now ${pcpu}%)"
+#                log "⚠️ $cmd (pid $pid) >${threshold_cpu}% CPU (now ${pcpu}%)"
+                 continue
             }
             if (( now - overpid[$pid] >= duration_cpu )); then
                 core=$(ps -p "$pid" -o psr= | tr -d ' ')
@@ -67,7 +68,8 @@ while :; do
         if (( usage > threshold_cpu )); then
             [[ -z ${overcore[$core]} ]] && {
                 overcore[$core]=$now
-                log "⚠️ core $core >${threshold_cpu}% load (now ${usage}%)"
+#                log "⚠️ core $core >${threshold_cpu}% load (now ${usage}%)"
+                continue
             }
             if (( now - overcore[$core] >= duration_cpu )); then
                 log -d "🔥 core $core sustained >${threshold_cpu}% for ${duration_cpu}s"
@@ -91,7 +93,8 @@ while :; do
         if (( temp > threshold_temp )); then
             [[ -z ${overtemp[$key]} ]] && {
                 overtemp[$key]=$now
-                log "⚠️ $key temp ${temp}°C >${threshold_temp}°C"
+#                log "⚠️ $key temp ${temp}°C >${threshold_temp}°C"
+                continue
             }
             if (( now - overtemp[$key] >= duration_temp )); then
                 log -d "🔥 $key sustained ${temp}°C for ${duration_temp}s"

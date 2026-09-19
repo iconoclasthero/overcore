@@ -1,7 +1,6 @@
 #!/bin/bash
 # overcore monitor
-verbose=1
-[[ /usr/local/bin/editscript ]] && . /usr/local/bin/editscript
+[[ -r /usr/local/bin/editscript ]] && . /usr/local/bin/editscript
 
 threshold_cpu=90        # % threshold for PID and core
 duration_cpu=600        # seconds above threshold
@@ -163,6 +162,11 @@ getcores(){
     awk '/^[0-9]/ && $3!="CPU" {print $3,100-$NF+0.5}'
   (( verbose )) && for i in {2..8}; do printf '[verbose] %s\n' "${mpstatarray[$i]}" >&2 ; done
 }
+
+while (( $# )); do
+  [[ "$1" = --verbose ]] && { verbose=1; shift; continue; }
+  shift
+done
 
 printf '[%s] %s starting\n' "$(date -Is)" "$0"
 

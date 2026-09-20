@@ -8,8 +8,7 @@ ExecStart=/usr/local/bin/overcore -threshold 95 -core-threshold 95 -duration 10m
 Restart=on-failure
 RestartSec=5
 
-# Reads /proc and /sys only; needs no privileges beyond writing to the FIFO.
-# Set User=/Group= to whatever can write the discord FIFO if not root.
+# Reads /proc and /sys and invokes discorddm for notifications.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/procfs"
 )
 
-const defaultFIFO = "/var/lib/discord/capnhook.fifo"
 
 // Default sensors: CPU-ish hwmon/thermal names. Override with -temp-match.
 const defaultTempMatch = `(?i)^(coretemp|k10temp|zenpower|x86_pkg_temp|cpu[-_]thermal|soc)`
@@ -44,8 +43,8 @@ func parseConfig(args []string) (cfg config, verbose bool, err error) {
 	fs.DurationVar(&cfg.tempWindow, "temp-duration", 5*time.Minute, "how long a sensor must stay at/above the temperature threshold")
 	fs.StringVar(&tempMatch, "temp-match", defaultTempMatch, "regexp selecting temperature sensors by key, e.g. coretemp_core_0")
 	fs.StringVar(&ignore, "ignore", "", "regexp of process names (comm) to ignore, e.g. '^(ffmpeg|x264)$'")
-	fs.StringVar(&cfg.fifo, "fifo", defaultFIFO, "FIFO to send alerts to (empty to disable)")
-	fs.BoolVar(&cfg.notifyRecovery, "notify-recovery", false, "also send recovery messages to the FIFO (always logged)")
+	fs.StringVar(&cfg.discordDM, "discorddm", defaultDiscordDM, "command to send alerts through (empty to disable)")
+	fs.BoolVar(&cfg.notifyRecovery, "notify-recovery", false, "also send recovery messages through DiscordDM (always logged)")
 	fs.BoolVar(&verbose, "v", false, "verbose: log per-core and top-process readings every interval")
 
 	if err = fs.Parse(args); err != nil {
@@ -108,7 +107,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("opening /proc: %w", err)
 	}
-	m := newMonitor(cfg, fs, log, newNotifier(log, cfg.fifo))
+	m := newMonitor(cfg, fs, log, newNotifier(log, cfg.discordDM))
 
 	log.Info("overcore starting",
 		"proc_threshold_pct", cfg.procThreshold,
@@ -118,7 +117,7 @@ func run(ctx context.Context, cfg config, log *slog.Logger) error {
 		"renotify", cfg.renotify.String(),
 		"temp_threshold_c", cfg.tempThreshold,
 		"temp_window", cfg.tempWindow.String(),
-		"fifo", cfg.fifo,
+		"discorddm", cfg.discordDM,
 	)
 	log.Info(fmt.Sprintf("first alerts possible after %s, once the averaging window has filled", fmtDur(cfg.window)))
 

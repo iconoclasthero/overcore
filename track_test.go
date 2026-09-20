@@ -2,8 +2,8 @@ package main
 
 import (
 	"math"
-	"os"
-	"path/filepath"
+//	"os"
+//	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -209,74 +209,32 @@ func TestFmtDur(t *testing.T) {
 	}
 }
 
-func TestWriteFIFO(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "f.fifo")
-	if err := syscall.Mkfifo(p, 0o600); err != nil {
-		t.Skip("mkfifo unavailable:", err)
-	}
+func TestNotifierQueuesWhileDiscordDown(t *testing.T) {
+    n := &notifier{command: "/x", host: "h", log: discardLogger()}
+    up := false
+    var delivered []string
 
-	// No reader: must fail fast, not hang.
-	done := make(chan error, 1)
-	go func() { done <- writeFIFO(p, "x\n") }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("expected ENXIO with no reader")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("writeFIFO blocked with no reader")
-	}
+    n.send = func(_, line string) error {
+        if !up {
+            return syscall.ENXIO
+        }
+        delivered = append(delivered, line)
+        return nil
+    }
 
-	// With a reader: line arrives intact.
-	r, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	if err := writeFIFO(p, "hello\n"); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 64)
-	n, _ := r.Read(buf)
-	if string(buf[:n]) != "hello\n" {
-		t.Fatalf("got %q", buf[:n])
-	}
-}
+    n.push("one")
+    n.push("two")
 
-func TestWriteFIFORefusesRegularFile(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "plain")
-	if err := os.WriteFile(p, []byte("precious"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFIFO(p, "boom\n"); err == nil {
-		t.Fatal("must refuse to write to a non-FIFO")
-	}
-	if b, _ := os.ReadFile(p); string(b) != "precious" {
-		t.Fatalf("file was modified: %q", b)
-	}
-}
+    if len(delivered) != 0 || len(n.pending) != 2 {
+        t.Fatalf("delivered=%d pending=%d", len(delivered), len(n.pending))
+    }
 
-func TestNotifierQueuesWhileFIFODown(t *testing.T) {
-	n := &notifier{fifo: "/x", host: "h", log: discardLogger()}
-	up := false
-	var delivered []string
-	n.sendFIFO = func(_, line string) error {
-		if !up {
-			return syscall.ENXIO
-		}
-		delivered = append(delivered, line)
-		return nil
-	}
-	n.push("one")
-	n.push("two")
-	if len(delivered) != 0 || len(n.pending) != 2 {
-		t.Fatalf("delivered=%d pending=%d", len(delivered), len(n.pending))
-	}
-	up = true
-	n.flush()
-	if len(delivered) != 2 || len(n.pending) != 0 ||
-		!strings.Contains(delivered[0], "one") || !strings.Contains(delivered[1], "two") {
-		t.Fatalf("expected in-order delivery, got %q pending=%d", delivered, len(n.pending))
-	}
+    up = true
+    n.flush()
+
+    if len(delivered) != 2 || len(n.pending) != 0 ||
+        !strings.Contains(delivered[0], "one") ||
+        !strings.Contains(delivered[1], "two") {
+        t.Fatalf("expected in-order delivery, got %q pending=%d", delivered, len(n.pending))
+    }
 }

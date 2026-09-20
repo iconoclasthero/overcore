@@ -140,8 +140,7 @@ func cmdline(fs procfs.FS, pid int) string {
 	return oneLine(strings.Join(args, " "), 200)
 }
 
-// oneLine strips control characters (so nothing in an argv can break the
-// line-oriented FIFO protocol) and truncates to max runes.
+// oneLine strips control characters and truncates to max runes.
 func oneLine(s string, max int) string {
 	s = strings.Map(func(r rune) rune {
 		switch {

@@ -29,7 +29,7 @@ type config struct {
 	tempMatch     *regexp.Regexp
 
 	ignore         *regexp.Regexp // process comm names to skip
-	fifo           string
+	discordDM      string
 	notifyRecovery bool
 }
 

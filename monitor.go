@@ -251,7 +251,7 @@ func (m *monitor) checkTemps(ctx context.Context, now time.Time) {
 // ------------------------------------------------------------------ helpers
 
 func (m *monitor) recovery(msg string) {
-	m.recoveryFor(msg, nil...)
+	m.recoveryFor(msg)
 }
 
 func (m *monitor) recoveryFor(msg string, identities ...alertIdentity) {

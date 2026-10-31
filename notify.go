@@ -28,8 +28,9 @@ type notifier struct {
   host    string
   command string
 
-  pending []string
-	batches []*alertBatch
+  pending      []string
+	batches      []*alertBatch
+	nextAlertSeq uint64
 
   // send is a replaceable test hook. Production uses discorddm.
   send func(command, line string) error
@@ -52,7 +53,7 @@ func newNotifier(log *slog.Logger, command string) *notifier {
   }
 }
 
-// alert logs the message and pushes it to Discord.
+// alert logs the message and adds it to a notification batch.
 func (n *notifier) alert(msg string) {
   n.alertFor(msg, nil...)
 }

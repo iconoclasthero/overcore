@@ -160,5 +160,4 @@ func sendDiscordDM(command, line string) error {
 // flush delivers expired alert batches, then retries failed Discord deliveries.
 func (n *notifier) flush() {
 	n.flushDue(time.Now())
-	n.flushPending()
 }

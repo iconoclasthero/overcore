@@ -55,7 +55,7 @@ func newNotifier(log *slog.Logger, command string) *notifier {
 
 // alert logs the message and adds it to a notification batch.
 func (n *notifier) alert(msg string) {
-  n.alertFor(msg, nil...)
+  n.alertFor(msg)
 }
 
 func (n *notifier) alertFor(msg string, identities ...alertIdentity) {

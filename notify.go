@@ -54,11 +54,15 @@ func newNotifier(log *slog.Logger, command string) *notifier {
 
 // alert logs the message and pushes it to Discord.
 func (n *notifier) alert(msg string) {
+  n.alertFor(msg, nil...)
+}
+
+func (n *notifier) alertFor(msg string, identities ...alertIdentity) {
   n.log.Warn(msg)
   if n.onAlert != nil {
     n.onAlert(msg)
   }
-  n.collect(msg, nil, time.Now())
+  n.collect(msg, identities, time.Now())
 }
 
 // info logs only.

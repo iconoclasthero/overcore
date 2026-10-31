@@ -19,6 +19,7 @@ type alertIdentity struct {
 
 type queuedAlert struct {
 	at   time.Time
+	seq  uint64
 	line string
 }
 
@@ -111,9 +112,10 @@ func (n *notifier) collect(msg string, identities []alertIdentity, now time.Time
 	for _, id := range identities {
 		batch.identities = appendIdentity(batch.identities, id)
 	}
-	batch.alerts = append(batch.alerts, queuedAlert{at: now, line: line})
-	sort.SliceStable(batch.alerts, func(i, j int) bool {
-		return batch.alerts[i].at.Before(batch.alerts[j].at)
+	n.nextAlertSeq++
+	batch.alerts = append(batch.alerts, queuedAlert{at: now, seq: n.nextAlertSeq, line: line})
+	sort.Slice(batch.alerts, func(i, j int) bool {
+		return batch.alerts[i].seq < batch.alerts[j].seq
 	})
 }
 

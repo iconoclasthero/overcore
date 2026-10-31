@@ -119,14 +119,14 @@ func (m *monitor) checkProcs(now time.Time) {
 		switch tr.alert.step(hot, clear, now, m.cfg.renotify) {
 		case actFire:
 			recent, _ := tr.win.recentPercent()
-			m.out.alert(fmt.Sprintf("⚠️  %s (pid %d) averaged %.1f%% of one core over %s (now %.1f%%, %d thread(s), last on cpu %d)%s",
-				p.comm, p.pid, avg, fmtDur(m.cfg.window), recent, p.threads, p.lastCPU, m.cmdSuffix(p.pid)))
+			m.out.alertFor(fmt.Sprintf("⚠️  %s (pid %d) averaged %.1f%% of one core over %s (now %.1f%%, %d thread(s), last on cpu %d)%s",
+				p.comm, p.pid, avg, fmtDur(m.cfg.window), recent, p.threads, p.lastCPU, m.cmdSuffix(p.pid)), processIdentity(p.pid, p.comm))
 		case actRemind:
-			m.out.alert(fmt.Sprintf("⚠️  STILL HOT: %s (pid %d) at %.1f%% of one core, flagged for %s%s",
-				p.comm, p.pid, avg, fmtDur(tr.alert.age(now)), m.cmdSuffix(p.pid)))
+			m.out.alertFor(fmt.Sprintf("⚠️  STILL HOT: %s (pid %d) at %.1f%% of one core, flagged for %s%s",
+				p.comm, p.pid, avg, fmtDur(tr.alert.age(now)), m.cmdSuffix(p.pid)), processIdentity(p.pid, p.comm))
 		case actRecovered:
-			m.recovery(fmt.Sprintf("%s (pid %d) back to %.1f%% of one core after %s",
-				p.comm, p.pid, avg, fmtDur(tr.alert.age(now))))
+			m.recoveryFor(fmt.Sprintf("%s (pid %d) back to %.1f%% of one core after %s",
+				p.comm, p.pid, avg, fmtDur(tr.alert.age(now))), processIdentity(p.pid, p.comm))
 		}
 	}
 
@@ -135,8 +135,8 @@ func (m *monitor) checkProcs(now time.Time) {
 			continue
 		}
 		if tr.alert.active {
-			m.recovery(fmt.Sprintf("%s (pid %d) exited after %s flagged",
-				tr.proc.comm, tr.proc.pid, fmtDur(tr.alert.age(now))))
+			m.recoveryFor(fmt.Sprintf("%s (pid %d) exited after %s flagged",
+				tr.proc.comm, tr.proc.pid, fmtDur(tr.alert.age(now))), processIdentity(tr.proc.pid, tr.proc.comm))
 		}
 		delete(m.procs, k)
 	}
@@ -183,19 +183,19 @@ func (m *monitor) checkCores(now time.Time) {
 		switch tr.alert.step(hot, clear, now, m.cfg.renotify) {
 		case actFire:
 			recent, _ := tr.win.recentPercent()
-			m.out.alert(fmt.Sprintf("⚠️  cpu%d averaged %.1f%% busy over %s (now %.1f%%)%s",
-				c.id, avg, fmtDur(m.cfg.window), recent, m.topSuffix()))
+			m.out.alertFor(fmt.Sprintf("⚠️  cpu%d averaged %.1f%% busy over %s (now %.1f%%)%s",
+				c.id, avg, fmtDur(m.cfg.window), recent, m.topSuffix()), m.coreIdentities(c.id)...)
 		case actRemind:
-			m.out.alert(fmt.Sprintf("⚠️  STILL HOT: cpu%d at %.1f%% busy, flagged for %s%s",
-				c.id, avg, fmtDur(tr.alert.age(now)), m.topSuffix()))
+			m.out.alertFor(fmt.Sprintf("⚠️  STILL HOT: cpu%d at %.1f%% busy, flagged for %s%s",
+				c.id, avg, fmtDur(tr.alert.age(now)), m.topSuffix()), m.coreIdentities(c.id)...)
 		case actRecovered:
-			m.recovery(fmt.Sprintf("cpu%d back to %.1f%% busy after %s", c.id, avg, fmtDur(tr.alert.age(now))))
+			m.recoveryFor(fmt.Sprintf("cpu%d back to %.1f%% busy after %s", c.id, avg, fmtDur(tr.alert.age(now))), keyedIdentity("core", fmt.Sprint(c.id)))
 		}
 	}
 	for id, tr := range m.cores {
 		if _, ok := seen[id]; !ok { // CPU went offline
 			if tr.alert.active {
-				m.recovery(fmt.Sprintf("cpu%d went offline while flagged", id))
+				m.recoveryFor(fmt.Sprintf("cpu%d went offline while flagged", id), keyedIdentity("core", fmt.Sprint(id)))
 			}
 			delete(m.cores, id)
 		}
@@ -229,19 +229,19 @@ func (m *monitor) checkTemps(ctx context.Context, now time.Time) {
 
 		switch tr.alert.step(hot, clear, now, m.cfg.renotify) {
 		case actFire:
-			m.out.alert(fmt.Sprintf("🔥 %s at %.0f°C, at or above %.0f°C for %s",
-				s.key, s.c, m.cfg.tempThreshold, fmtDur(elapsed)))
+			m.out.alertFor(fmt.Sprintf("🔥 %s at %.0f°C, at or above %.0f°C for %s",
+				s.key, s.c, m.cfg.tempThreshold, fmtDur(elapsed)), keyedIdentity("sensor", s.key))
 		case actRemind:
-			m.out.alert(fmt.Sprintf("🔥 STILL HOT: %s at %.0f°C, over %.0f°C for %s",
-				s.key, s.c, m.cfg.tempThreshold, fmtDur(elapsed)))
+			m.out.alertFor(fmt.Sprintf("🔥 STILL HOT: %s at %.0f°C, over %.0f°C for %s",
+				s.key, s.c, m.cfg.tempThreshold, fmtDur(elapsed)), keyedIdentity("sensor", s.key))
 		case actRecovered:
-			m.recovery(fmt.Sprintf("%s cooled to %.0f°C", s.key, s.c))
+			m.recoveryFor(fmt.Sprintf("%s cooled to %.0f°C", s.key, s.c), keyedIdentity("sensor", s.key))
 		}
 	}
 	for k, tr := range m.temps {
 		if _, ok := seen[k]; !ok {
 			if tr.alert.active {
-				m.recovery(fmt.Sprintf("sensor %s disappeared while flagged", k))
+				m.recoveryFor(fmt.Sprintf("sensor %s disappeared while flagged", k), keyedIdentity("sensor", k))
 			}
 			delete(m.temps, k)
 		}
@@ -251,11 +251,26 @@ func (m *monitor) checkTemps(ctx context.Context, now time.Time) {
 // ------------------------------------------------------------------ helpers
 
 func (m *monitor) recovery(msg string) {
+	m.recoveryFor(msg)
+}
+
+func (m *monitor) recoveryFor(msg string, identities ...alertIdentity) {
 	if m.cfg.notifyRecovery {
-		m.out.alert("✅ " + msg)
+		m.out.alertFor("✅ "+msg, identities...)
 	} else {
 		m.out.info("recovered: " + msg)
 	}
+}
+
+func (m *monitor) coreIdentities(id int64) []alertIdentity {
+	identities := []alertIdentity{keyedIdentity("core", fmt.Sprint(id))}
+	for i, b := range m.top {
+		if i == 3 || b.pct < 5 {
+			break
+		}
+		identities = appendIdentity(identities, processIdentity(b.s.pid, b.s.comm))
+	}
+	return identities
 }
 
 func (m *monitor) cmdSuffix(pid int) string {

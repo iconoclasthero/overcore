@@ -195,7 +195,7 @@ func (m *monitor) checkCores(now time.Time) {
 	for id, tr := range m.cores {
 		if _, ok := seen[id]; !ok { // CPU went offline
 			if tr.alert.active {
-				m.recovery(fmt.Sprintf("cpu%d went offline while flagged", id))
+				m.recoveryFor(fmt.Sprintf("cpu%d went offline while flagged", id), keyedIdentity("core", fmt.Sprint(id)))
 			}
 			delete(m.cores, id)
 		}
@@ -241,7 +241,7 @@ func (m *monitor) checkTemps(ctx context.Context, now time.Time) {
 	for k, tr := range m.temps {
 		if _, ok := seen[k]; !ok {
 			if tr.alert.active {
-				m.recovery(fmt.Sprintf("sensor %s disappeared while flagged", k))
+				m.recoveryFor(fmt.Sprintf("sensor %s disappeared while flagged", k), keyedIdentity("sensor", k))
 			}
 			delete(m.temps, k)
 		}
@@ -264,8 +264,8 @@ func (m *monitor) recoveryFor(msg string, identities ...alertIdentity) {
 
 func (m *monitor) coreIdentities(id int64) []alertIdentity {
 	identities := []alertIdentity{keyedIdentity("core", fmt.Sprint(id))}
-	for _, b := range m.top {
-		if b.pct < 5 {
+	for i, b := range m.top {
+		if i == 3 || b.pct < 5 {
 			break
 		}
 		identities = appendIdentity(identities, processIdentity(b.s.pid, b.s.comm))

@@ -29,6 +29,7 @@ type notifier struct {
   command string
 
   pending []string
+	batches []*alertBatch
 
   // send is a replaceable test hook. Production uses discorddm.
   send func(command, line string) error
@@ -57,7 +58,7 @@ func (n *notifier) alert(msg string) {
   if n.onAlert != nil {
     n.onAlert(msg)
   }
-  n.push(msg)
+  n.collect(msg, nil, time.Now())
 }
 
 // info logs only.
@@ -102,7 +103,7 @@ func (n *notifier) enqueue(line string) {
 // Called on every push and once per monitoring cycle, so an alert raised
 // while Discord is unavailable is delivered once it becomes available
 // instead of being silently lost.
-func (n *notifier) flush() {
+func (n *notifier) flushPending() {
   if n.command == "" {
     return
   }
@@ -149,4 +150,10 @@ func sendDiscordDM(command, line string) error {
   }
 
   return nil
+}
+
+// flush delivers expired alert batches, then retries failed Discord deliveries.
+func (n *notifier) flush() {
+	n.flushDue(time.Now())
+	n.flushPending()
 }
